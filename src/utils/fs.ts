@@ -3,12 +3,13 @@ import { dirname } from './path';
 
 export * from 'fs';
 
-export const readFile = (file: string): Promise<string> =>
-	new Promise<string>((fulfil, reject) =>
+export function readFile(file: string): Promise<string> {
+	return new Promise((fulfil, reject) =>
 		fs.readFile(file, 'utf-8', (err, contents) => (err ? reject(err) : fulfil(contents)))
 	);
+}
 
-function mkdirpath(path: string) {
+function mkdirpath(path: string): void {
 	const dir = dirname(path);
 	try {
 		fs.readdirSync(dir);
@@ -25,7 +26,7 @@ function mkdirpath(path: string) {
 }
 
 export function writeFile(dest: string, data: string | Uint8Array): Promise<void> {
-	return new Promise<void>((fulfil, reject) => {
+	return new Promise((fulfil, reject) => {
 		mkdirpath(dest);
 
 		fs.writeFile(dest, data, err => {
