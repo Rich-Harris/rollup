@@ -529,6 +529,7 @@ export interface InputOptions {
 	context?: string;
 	experimentalCacheExpiry?: number;
 	external?: ExternalOption;
+	fileExtensions?: boolean | string[];
 	/** @deprecated Use the "inlineDynamicImports" output option instead. */
 	inlineDynamicImports?: boolean;
 	input?: InputOption;
@@ -557,6 +558,7 @@ export interface NormalizedInputOptions {
 	context: string;
 	experimentalCacheExpiry: number;
 	external: IsExternal;
+	fileExtensions: 'explicit' | readonly string[];
 	/** @deprecated Use the "inlineDynamicImports" output option instead. */
 	inlineDynamicImports: boolean | undefined;
 	input: string[] | { [entryAlias: string]: string };

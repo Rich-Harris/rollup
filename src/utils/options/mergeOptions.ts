@@ -116,6 +116,7 @@ function mergeInputOptions(
 		context: getOption('context'),
 		experimentalCacheExpiry: getOption('experimentalCacheExpiry'),
 		external: getExternal(config, overrides),
+		fileExtensions: getOption('fileExtensions'),
 		inlineDynamicImports: getOption('inlineDynamicImports'),
 		input: getOption('input') || [],
 		makeAbsoluteExternalsRelative: getOption('makeAbsoluteExternalsRelative'),
