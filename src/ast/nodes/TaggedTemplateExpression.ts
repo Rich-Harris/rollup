@@ -1,11 +1,14 @@
 import MagicString from 'magic-string';
+import { NormalizedTreeshakingOptions } from '../../rollup/types';
 import { RenderOptions } from '../../utils/renderHelpers';
-import { CallOptions, NO_ARGS } from '../CallOptions';
+import { CallOptions } from '../CallOptions';
 import { HasEffectsContext } from '../ExecutionContext';
 import { EMPTY_PATH } from '../utils/PathTracker';
 import Identifier from './Identifier';
+import MemberExpression from './MemberExpression';
 import * as NodeType from './NodeType';
 import TemplateLiteral from './TemplateLiteral';
+import { UNKNOWN_EXPRESSION } from './shared/Expression';
 import { ExpressionNode, NodeBase } from './shared/Node';
 
 export default class TaggedTemplateExpression extends NodeBase {
@@ -34,16 +37,25 @@ export default class TaggedTemplateExpression extends NodeBase {
 	}
 
 	hasEffects(context: HasEffectsContext): boolean {
+		for (const expression of this.quasi.expressions) {
+			if (expression.hasEffects(context)) return true;
+		}
+		if (
+			(this.context.options.treeshake as NormalizedTreeshakingOptions).annotations &&
+			this.annotations
+		)
+			return false;
 		return (
-			super.hasEffects(context) ||
+			this.tag.hasEffects(context) ||
 			this.tag.hasEffectsWhenCalledAtPath(EMPTY_PATH, this.callOptions, context)
 		);
 	}
 
 	initialise(): void {
 		this.callOptions = {
-			args: NO_ARGS,
-			thisParam: null,
+			args: [UNKNOWN_EXPRESSION, ...this.quasi.expressions],
+			thisParam:
+				this.tag instanceof MemberExpression && !this.tag.variable ? this.tag.object : null,
 			withNew: false
 		};
 	}
