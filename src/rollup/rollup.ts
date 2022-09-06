@@ -24,22 +24,183 @@ import type {
 	RollupBuild,
 	RollupOptions,
 	RollupOutput,
+	RollupService,
 	RollupWatcher
 } from './types';
+import Module from '../Module';
 
 export default function rollup(rawInputOptions: GenericConfigObject): Promise<RollupBuild> {
 	return rollupInternal(rawInputOptions, null);
 }
 
-export async function rollupInternal(
-	rawInputOptions: GenericConfigObject,
+export async function startService(
+	{ input, ...rawInputOptions }: GenericConfigObject,
 	watcher: RollupWatcher | null
-): Promise<RollupBuild> {
+): Promise<RollupService> {
+	if (input) {
+		throw new Error(
+			`The 'input' option must not be specified when starting Rollup in service mode.`
+		);
+	}
+
+	const { graph, inputOptions, unsetInputOptions } = await graphSetup(rawInputOptions, watcher);
+
+	const service: RollupService = {
+		async build(
+			input,
+			{ signal, shouldIncludeInBundle: shouldIncludeInBundleFn, ...rawOutputOptions }
+		) {
+			const normalizedInput = input == null ? [] : typeof input === 'string' ? [input] : input;
+			const seen: Set<string> = new Set();
+			const entrypoints = Array.isArray(normalizedInput)
+				? [...normalizedInput]
+				: Object.values(normalizedInput);
+
+			const modulesById: Map<string, Module> = new Map();
+			const entryModules: Module[] = [];
+
+			const entrypointIdPromises = entrypoints.map(async source => {
+				const resolvedId = await graph.moduleLoader.resolveId(source, undefined, {}, true);
+
+				if (!resolvedId) {
+					throw new Error(`Failed to resolve the entrypoint ${source}`);
+				}
+
+				if (resolvedId.external) {
+					throw new Error(`An entrypoint cannot be marked as external ${source}`);
+				}
+
+				return resolvedId.id;
+			});
+
+			const entrypointIds = new Set(await Promise.all(entrypointIdPromises));
+			const queue = [...entrypointIds];
+
+			while (queue.length && signal?.aborted !== true) {
+				const moduleId = queue.shift()!;
+
+				if (seen.has(moduleId)) {
+					continue;
+				}
+				seen.add(moduleId);
+
+				console.log('preloading', moduleId);
+
+				const moduleInfo = await graph.moduleLoader.preloadModule({
+					id: moduleId,
+					isEntry: false,
+					resolveDependencies: true
+				});
+
+				const module = graph.modulesById.get(moduleInfo.id)!;
+				
+				if (!(module instanceof Module)) {
+					continue;
+				}
+
+				modulesById.set(module.id, module);
+
+				if (entrypointIds.has(moduleId)) {
+					entryModules.push(module);
+				}
+
+				for (const [source, resolvedDependencyId] of Object.entries(module.resolvedIds)) {
+					// If `source` is nullish, this means it came from a plugin. We want synthetic files
+					// to be included.
+					if (
+						shouldIncludeInBundleFn &&
+						source != null &&
+						!resolvedDependencyId.id.startsWith('\0')
+					) {
+						if (!shouldIncludeInBundleFn(resolvedDependencyId, source, module.id)) {
+							continue;
+						}
+					}
+
+					queue.push(resolvedDependencyId.id);
+				}
+			}
+
+			console.log(
+				'finished traversing',
+				Array.from(modulesById.values()).map(m => m.info.id)
+			);
+
+			for (const module of modulesById.values()) {
+				graph.ensureModule(module);
+			}
+
+			for (const module of modulesById.values()) {
+				module.linkImports();
+				module.bindReferences();
+				module.includeAllInBundle();
+			}
+
+			const {
+				options: outputOptions,
+				outputPluginDriver,
+				unsetOptions
+			} = getOutputOptionsAndPluginDriver(
+				rawOutputOptions as GenericConfigObject,
+				graph.pluginDriver,
+				inputOptions,
+				unsetInputOptions
+			);
+
+			const outputBundle = await Bundle.fromModules(
+				outputOptions,
+				unsetOptions,
+				inputOptions,
+				outputPluginDriver,
+				graph,
+				entryModules,
+				modulesById
+			);
+
+			return createOutput(outputBundle);
+		},
+		async close(err?: any) {
+			if (service.closed) return;
+
+			service.closed = true;
+
+			if (err) {
+				const watchFiles = Object.keys(graph.watchFiles);
+				if (watchFiles.length > 0) {
+					err.watchFiles = watchFiles;
+				}
+			}
+
+			await graph.pluginDriver.hookParallel('buildEnd', err ? [err] : []);
+			await graph.pluginDriver.hookParallel('closeBundle', []);
+		},
+		closed: false,
+		getModuleInfo: graph.getModuleInfo,
+		load(id, options) {
+			return graph.moduleLoader.preloadModule({ ...options, id });
+		},
+		resolve(source, importer, options) {
+			return graph.moduleLoader.resolveId(source, importer, options, false);
+		}
+	};
+
+	await catchUnfinishedHookActions(graph.pluginDriver, async () => {
+		try {
+			await graph.pluginDriver.hookParallel('buildStart', [inputOptions]);
+		} catch (err: any) {
+			await service.close(err);
+			throw err;
+		}
+	});
+
+	return service;
+}
+
+async function graphSetup(rawInputOptions: GenericConfigObject, watcher: RollupWatcher | null) {
 	const { options: inputOptions, unsetOptions: unsetInputOptions } = await getInputOptions(
 		rawInputOptions,
 		watcher !== null
 	);
-	initialiseTimers(inputOptions);
 
 	const graph = new Graph(inputOptions, watcher);
 
@@ -47,6 +208,25 @@ export async function rollupInternal(
 	const useCache = rawInputOptions.cache !== false;
 	delete inputOptions.cache;
 	delete rawInputOptions.cache;
+
+	return {
+		graph,
+		inputOptions,
+		unsetInputOptions,
+		useCache
+	};
+}
+
+export async function rollupInternal(
+	rawInputOptions: GenericConfigObject,
+	watcher: RollupWatcher | null
+): Promise<RollupBuild> {
+	const { graph, inputOptions, unsetInputOptions, useCache } = await graphSetup(
+		rawInputOptions,
+		watcher
+	);
+
+	initialiseTimers(inputOptions);
 
 	timeStart('BUILD', 1);
 

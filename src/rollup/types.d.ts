@@ -830,6 +830,29 @@ export interface RollupBuild {
 	write: (options: OutputOptions) => Promise<RollupOutput>;
 }
 
+export interface BuildOptions extends OutputOptions {
+	signal?: {
+		aborted: boolean;
+	};
+	shouldIncludeInBundle?: (resolvedId: ResolvedId, source: string, fromId: string) => boolean;
+}
+
+export interface RollupService {
+	build: (input: InputOption, options: BuildOptions) => Promise<RollupOutput>;
+	close: (err?: any) => Promise<void>;
+	closed: boolean;
+	load: (
+		source: string,
+		options?: { resolveDependencies?: boolean } & Partial<PartialNull<ModuleOptions>>
+	) => Promise<ModuleInfo>;
+	getModuleInfo: GetModuleInfo;
+	resolve: (
+		source: string,
+		importer?: string,
+		options?: { custom?: CustomPluginOptions; isEntry?: boolean }
+	) => Promise<ResolvedId | null>;
+}
+
 export interface RollupOptions extends InputOptions {
 	// This is included for compatibility with config files but ignored by rollup.rollup
 	output?: OutputOptions | OutputOptions[];
@@ -840,6 +863,8 @@ export interface MergedRollupOptions extends InputOptions {
 }
 
 export function rollup(options: RollupOptions): Promise<RollupBuild>;
+
+export function startService(options: RollupOptions): Promise<RollupService>;
 
 export interface ChokidarOptions {
 	alwaysStat?: boolean;
